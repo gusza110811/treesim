@@ -1,5 +1,6 @@
 import pygame
 import random
+import math
 
 DEFAULT_GENOME = [(16,16,1,5),(2, 16, 16, 16), (16, 16, 1, 16), (16, 16, 16, 16),
                   (16,16,16,16),(6, 16, 16, 16), (16, 16, 16, 5), (16, 16, 16, 16)]*2
@@ -13,7 +14,7 @@ class Particle:
         self.energy = 20
         self.age = age
         self.max_age = 100
-        self.genome = genome # new active gene for each direction (up down left right), -16 means no growth
+        self.genome = genome # new active gene for each direction (up down left right), 16 means no growth
         self.active_gene = active_gene
     
     def mutate(self):
@@ -32,13 +33,13 @@ class Particle:
         self.genome = new_genome
 
     def update(self, get_neighbors, new_particle):
-        self.x %= 160 # wrap around horizontally
+        self.x %= 320
 
         if self.y >= 0:
             return False
 
         if self.type == 2:
-            self.energy -= 0.1 # seed loses energy over time
+            self.energy -= 0.01 # seed loses energy over time
             if self.y < -1:
                 self.y += 1
             else:
@@ -55,15 +56,8 @@ class Particle:
             return False # die
         
         if self.type == 1:
-            neighbors = get_neighbors(self)
             if self.energy < 50:
                 self.energy += -self.y
-                return True
-
-            if (not neighbors) and self.y != -1:
-                self.age = 0
-                self.type = 2 # bud becomes seed if no neighbors (disconnected)
-                self.active_gene = 0
                 return True
             
             if self.age > self.max_age:
@@ -77,6 +71,8 @@ class Particle:
 
             self.mutate() # mutate genome over time
 
+            neighbors = []
+
             for idx, attempt in enumerate([(0, -1), (0, 1), (-1, 0), (1, 0)]): # up, down, left, right
                 if gene[idx] < 16: # active growth gene
                     new_x = self.x + attempt[0]
@@ -84,6 +80,8 @@ class Particle:
                     if new_y > 0: # only grow upwards
                         continue
                     # check if new position is occupied by neighbors
+                    if not neighbors:
+                        neighbors = get_neighbors(self)
                     if not any(n.x == new_x and n.y == new_y for n in neighbors):
                         # grow new bud
                         part = Particle(new_x, new_y, type=1, genome=self.genome, active_gene=gene[idx], age=self.age)
@@ -100,31 +98,35 @@ class Game:
         self.screensize = self.screen.get_size()
         self.clock = pygame.time.Clock()
 
-        # top-left position of the camera
+        # center position of the camera
         self.camx = 0
-        self.camy = -300
+        self.camy = 0
+
+        self.zoom = 0 # magnitude 2^n
 
         self.enable_dbg = True
 
         self.font = pygame.font.SysFont(None, 24)
 
         self.target_fps = 30
+
+        self.running = True
     
     def start(self):
         # one particle is 10x10 pixels
         self.particles = []
+        self.grid = {} # dict: (x, y) -> particle for O(1) collision checks
         init_particle = Particle(80, -30) # start with one seed in the middle
 
         init_particle.energy = 200 # give the initial seed more energy to grow faster
         self.particles.append(init_particle)
+        self.grid[(init_particle.x, init_particle.y)] = init_particle
 
     def update(self):
         dt = self.clock.get_time() / 1000.0
 
         keys = pygame.key.get_pressed()
-        speed = 500 * dt
-        if keys[pygame.KMOD_SHIFT]:
-            speed *= 2
+        speed = 500 * dt * (2 ** -self.zoom) # camera speed scales with zoom level
         if keys[pygame.K_w]:
             self.camy -= speed
         if keys[pygame.K_s]:
@@ -134,51 +136,62 @@ class Game:
         if keys[pygame.K_d]:
             self.camx += speed
 
+        if self.running:
+            self.simulate()
+
+    def simulate(self):
         def new_particle(particle):
             self.particles.append(particle)
+            self.grid[(particle.x, particle.y)] = particle
         
-        # 4 neighbors
         def get_neighbors(particle):
-            out = []
-            for other in self.particles:
-                if other is particle:
-                    continue
-                distx = abs(other.x - particle.x)
-                disty = abs(other.y - particle.y)
-                if distx <= 1 and disty == 0:
-                    out.append(other)
-                elif disty <= 1 and distx == 0:
-                    out.append(other)
-            return out
+            grid = self.grid                 # dict: (x, y) -> particle
+            px, py = particle.x, particle.y
+
+            # Gather neighbors from the four cardinal directions
+            neighbors = []
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                p = grid.get((px + dx, py + dy))
+                if p is not None:
+                    neighbors.append(p)
+
+            return neighbors
 
         self.current_particles = self.particles.copy()
         for particle in self.current_particles:
             if not particle.update(get_neighbors, new_particle):
+                self.grid.pop((particle.x, particle.y), None)
                 self.particles.remove(particle)
 
     def render(self):
+        zoom = 2 ** self.zoom
+
+        camx = self.camx - self.screensize[0] / 2 / zoom
+        camy = self.camy - self.screensize[1] / 2 / zoom
 
         # floor
-        floor_rely = -self.camy
+        floor_rely = -camy*zoom
         pygame.draw.rect(self.screen, (100, 100, 100), (0, floor_rely, self.screensize[0], self.screensize[1] - floor_rely))
 
         # origin
-        pygame.draw.circle(self.screen, (255, 0, 0), (-self.camx, -self.camy), 5)
+        pygame.draw.circle(self.screen, (255, 0, 0), (-camx*zoom, -camy*zoom), 5)
 
         # left boundary
-        pygame.draw.line(self.screen, (255, 255, 0), (-self.camx, 0), (-self.camx, self.screensize[1]), 2)
+        pygame.draw.line(self.screen, (255, 255, 0), (-camx*zoom, 0), (-camx*zoom, self.screensize[1]), 2)
 
         # right boundary
-        pygame.draw.line(self.screen, (255, 255, 0), (self.screensize[0]*2 - self.camx, 0), (self.screensize[0]*2 - self.camx, self.screensize[1]), 2)
+        pygame.draw.line(self.screen, (255, 255, 0), ((self.screensize[0]*4 - camx) * zoom, 0), ((self.screensize[0]*4 - camx) * zoom, self.screensize[1]), 2)
 
         for particle in self.particles:
             color = (0, 128, 0) if particle.type == 0 else (0, 255, 0) if particle.type == 1 else (255, 255, 0)
-            pygame.draw.rect(self.screen, color, (particle.x * 10 - self.camx, particle.y * 10 - self.camy, 10, 10))
+            pygame.draw.rect(self.screen, color, ((particle.x * 10 - camx) * zoom, (particle.y * 10 - camy) * zoom, 10 * zoom + 1, 10 * zoom + 1))
 
     def render_debug(self):
         # Render debug information
         debug_texts = [
+            "paused" if not self.running else "running",
             f"Camera Position: ({self.camx}, {self.camy})",
+            f"Zoom Level: {self.zoom} (scale: {2 ** self.zoom:.2f}x)",
             f"Particles: {len(self.particles)}",
             f"FPS: {self.clock.get_fps():.2f}/{self.target_fps}",
         ]
@@ -197,10 +210,27 @@ class Game:
             if event.key == pygame.K_r:
                 self.start() # reset game
             
+            if event.key == pygame.K_SPACE:
+                self.running = not self.running # toggle simulation
+            if event.key == pygame.K_f:
+                self.running = False
+                self.simulate() # step simulation forward one frame
+            
             if event.key == pygame.K_PLUS or event.key == pygame.K_KP_PLUS:
                 self.target_fps += 5
             if event.key == pygame.K_MINUS or event.key == pygame.K_KP_MINUS:
                 self.target_fps = max(5, self.target_fps - 5)
+            
+            if event.key == pygame.K_m:
+                self.target_fps = 1000000 # max fps for benchmarking
+            if event.key == pygame.K_n:
+                self.target_fps = 30 # reset to default fps
+        
+        if event.type == pygame.MOUSEWHEEL:
+            if event.y > 0:
+                self.zoom += 1
+            else:
+                self.zoom -= 1
 
 def main():
     game = Game()
