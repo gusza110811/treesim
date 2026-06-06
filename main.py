@@ -33,7 +33,6 @@ class Particle:
 
     def update(self, get_neighbors, new_particle):
         self.x %= 160 # wrap around horizontally
-        neighbors = get_neighbors(self)
 
         if self.y >= 0:
             return False
@@ -50,15 +49,13 @@ class Particle:
         if self.type == 0:
             if self.age > self.max_age:
                 return False # die
-            if neighbors:
-                return True # stem is passive
-            else:
-                return False # stem dies if no neighbors (disconnected)
+            return True # stem is passive
         
         if self.energy <= 0:
             return False # die
         
         if self.type == 1:
+            neighbors = get_neighbors(self)
             if self.energy < 50:
                 self.energy += -self.y
                 return True
