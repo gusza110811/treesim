@@ -1,4 +1,5 @@
 import pygame
+import random
 
 DEFAULT_GENOME = [(16,16,1,5),(2, 16, 16, 16), (16, 16, 1, 16), (16, 16, 16, 16),
                   (16,16,16,16),(6, 16, 16, 16), (16, 16, 16, 5), (16, 16, 16, 16)]*2
@@ -9,12 +10,27 @@ class Particle:
         self.y = y
         self.type = type # 0 = stem, 1 = bud, 2 = seed
 
-        self.energy = 100
+        self.energy = 20
         self.age = age
         self.max_age = 100
         self.genome = genome # new active gene for each direction (up down left right), -16 means no growth
         self.active_gene = active_gene
     
+    def mutate(self):
+        # mutate genome with small random changes
+
+        new_genome = []
+        for gene in self.genome:
+            new_gene = []
+            for g in gene:
+                if random.random() < 0.001: 
+                    new_g = g + random.randint(-2, 2) % 17 # small mutation
+                    new_gene.append(new_g)
+                else:
+                    new_gene.append(g)
+            new_genome.append(tuple(new_gene))
+        self.genome = new_genome
+
     def update(self, get_neighbors, new_particle):
         self.x %= 160 # wrap around horizontally
         neighbors = get_neighbors(self)
@@ -23,7 +39,7 @@ class Particle:
             return False
 
         if self.type == 2:
-            self.energy -= 1 # seed loses energy over time
+            self.energy -= 0.1 # seed loses energy over time
             if self.y < -1:
                 self.y += 1
             else:
@@ -43,8 +59,8 @@ class Particle:
             return False # die
         
         if self.type == 1:
-            if self.energy < 120:
-                self.energy += -self.y + 5
+            if self.energy < 50:
+                self.energy += -self.y
                 return True
 
             if (not neighbors) and self.y != -1:
@@ -62,6 +78,8 @@ class Particle:
             # bud tries to grow according to active gene
             gene = self.genome[self.active_gene]
 
+            self.mutate() # mutate genome over time
+
             for idx, attempt in enumerate([(0, -1), (0, 1), (-1, 0), (1, 0)]): # up, down, left, right
                 if gene[idx] < 16: # active growth gene
                     new_x = self.x + attempt[0]
@@ -71,7 +89,9 @@ class Particle:
                     # check if new position is occupied by neighbors
                     if not any(n.x == new_x and n.y == new_y for n in neighbors):
                         # grow new bud
-                        new_particle(Particle(new_x, new_y, type=1, genome=self.genome, active_gene=gene[idx], age=self.age))
+                        part = Particle(new_x, new_y, type=1, genome=self.genome, active_gene=gene[idx], age=self.age)
+                        part.energy += self.energy // 2
+                        new_particle(part)
                     self.type = 0 # bud becomes stem after growing
 
         return True
@@ -83,9 +103,6 @@ class Game:
         self.screensize = self.screen.get_size()
         self.clock = pygame.time.Clock()
 
-        # one particle is 10x10 pixels
-        self.particles = []
-
         # top-left position of the camera
         self.camx = 0
         self.camy = -300
@@ -93,13 +110,22 @@ class Game:
         self.enable_dbg = True
 
         self.font = pygame.font.SysFont(None, 24)
+
+        self.target_fps = 30
     
     def start(self):
-        self.particles.append(Particle(30,-20))
+        # one particle is 10x10 pixels
+        self.particles = []
+        init_particle = Particle(80, -30) # start with one seed in the middle
+
+        init_particle.energy = 200 # give the initial seed more energy to grow faster
+        self.particles.append(init_particle)
 
     def update(self):
+        dt = self.clock.get_time() / 1000.0
+
         keys = pygame.key.get_pressed()
-        speed = 15
+        speed = 500 * dt
         if keys[pygame.KMOD_SHIFT]:
             speed *= 2
         if keys[pygame.K_w]:
@@ -157,7 +183,7 @@ class Game:
         debug_texts = [
             f"Camera Position: ({self.camx}, {self.camy})",
             f"Particles: {len(self.particles)}",
-            f"FPS: {self.clock.get_fps():.2f}",
+            f"FPS: {self.clock.get_fps():.2f}/{self.target_fps}",
         ]
         for i, text in enumerate(debug_texts):
             debug_surface = self.font.render(text, True, (0, 255, 0))
@@ -170,6 +196,14 @@ class Game:
                 exit()
             if event.key == pygame.K_F3:
                 self.enable_dbg = not self.enable_dbg
+
+            if event.key == pygame.K_r:
+                self.start() # reset game
+            
+            if event.key == pygame.K_PLUS or event.key == pygame.K_KP_PLUS:
+                self.target_fps += 5
+            if event.key == pygame.K_MINUS or event.key == pygame.K_KP_MINUS:
+                self.target_fps = max(5, self.target_fps - 5)
 
 def main():
     game = Game()
@@ -188,7 +222,7 @@ def main():
         if game.enable_dbg:
             game.render_debug()
         pygame.display.flip()
-        game.clock.tick(30)
+        game.clock.tick(game.target_fps)
 
     pygame.quit()
 
