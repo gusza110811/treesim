@@ -25,7 +25,7 @@ class Particle:
             new_gene = []
             for g in gene:
                 if random.random() < 0.001: 
-                    new_g = g + random.randint(-2, 2) % 17 # small mutation
+                    new_g = (g + random.randint(-2, 2)) % 17 # small mutation
                     new_gene.append(new_g)
                 else:
                     new_gene.append(g)
